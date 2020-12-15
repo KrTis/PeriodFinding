@@ -38,7 +38,8 @@ class correctedNaiveMultiband:
         return np.array([p[0] for p in PA]), np.array([p[1] for p in PA])
     def periodogram(self,*args,**kwargs):
         return np.array([self.models[_filter].periodogram(*args,**kwargs) for _filter in self.filters])
-def testing(Number_in_simulation,P0,original_file,TYPE='fast',doMC=True,Periodogram_auto=False):
+
+def testing(Number_in_simulation, P0, original_file, TYPE='fast', doMC=True, Periodogram_auto=False):
 
         o = np.linspace(1/100,24,10000)
         def process(df, filters=list('IV')):
@@ -99,6 +100,7 @@ class MCSimulation:
         self.lightcurve_p = {}
         self.lightcurve = {}
         self.simulated_periods = {}
+        
     def run_simulation(self,method, Sizes, Nreps, output='outputs/',cluster=None):
         if cluster is None:
             self.simulations[method]\
@@ -113,6 +115,7 @@ class MCSimulation:
         self.lightcurve_p[method],\
         self.lightcurve[method],\
         self.simulated_periods[method] = self.decompose(self.simulations[method],method, output)
+    
     def decompose(self,VectorizedInput,method,output_):
         MCN,MCPeriods,\
         MCPeriodogram_p, MCPeriodogram_A,\
