@@ -10,7 +10,7 @@ from astropy.table import Table, vstack
 import warnings
 from scipy.stats import sem
 from dask.distributed import Client, SSHCluster
-import dask.array as da
+
 class correctedNaiveMultiband:
     def __init__(self,*args,**kwargs):
         
@@ -38,8 +38,14 @@ class correctedNaiveMultiband:
         return np.array([p[0] for p in PA]), np.array([p[1] for p in PA])
     def periodogram(self,*args,**kwargs):
         return np.array([self.models[_filter].periodogram(*args,**kwargs) for _filter in self.filters])
-
-def testing(Number_in_simulation, P0, original_file, TYPE='fast', doMC=True, Periodogram_auto=False):
+def make_samples(df,filtercol,Number_in_simulation):
+            DF = pd.DataFrame()
+            for _filter in pd.unique(df[filtercol]):
+                cut = df[df[filtercol]==_filter]
+                
+                DF = DF.append(cut.iloc[np.random.randint(0,cut.shape[0],min(Number_in_simulation,cut.shape[0])),:])
+            return DF.reset_index()
+def testing(Number_in_simulation, P0, original_file, TYPE='fast',  Periodogram_auto=False):
 
         o = np.linspace(1/100,24,10000)
         def process(df, filters=list('IV')):
@@ -74,13 +80,11 @@ def testing(Number_in_simulation, P0, original_file, TYPE='fast', doMC=True, Per
             if Periodogram_auto:
                 return np.mean(model.best_period), tfit, filtsfit, magfit, phasefit,model.periodogram_auto()
             return np.mean(model.best_period), tfit, filtsfit, magfit, phasefit,[o,model.periodogram(o)]
-        df = pd.read_csv(original_file)
-        if doMC:
-            DF = pd.DataFrame()
-            for _filter in pd.unique(df['filt']):
-                cut = df[df['filt']==_filter]
-                DF = DF.append(cut.iloc[np.random.randint(0,cut.shape[0],min(Number_in_simulation,cut.shape[0])),:])
-            df = DF.reset_index()
+        if isinstance(original_file,str):
+            df = pd.read_csv(original_file)
+        else:
+            df = original_file
+        
         with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 K = process(df, np.unique(df["filt"]))
@@ -88,30 +92,35 @@ def testing(Number_in_simulation, P0, original_file, TYPE='fast', doMC=True, Per
         return  Number_in_simulation,K[0],\
                 K[-1][0],\
                 K[-1][1],\
-                K[2].flatten(), K[3], K[4],TYPE    
-
+                K[2].flatten(), K[3], K[4],TYPE   
+def unpack(X):
+    N = len(X)
+    L = len(X[0])
+    outs = [np.array([X[i][j] for i in range(N)]) for j in range(L)]
+    return outs
 class MCSimulation:
     def __init__(self, data_, P0, initial_lightcurve):
         self.P0                 = P0
         self.data_              = data_
         self.initial_lightcurve = initial_lightcurve
-        self.best_fitting       = testing(None, P0,initial_lightcurve,doMC=False,TYPE="naive",Periodogram_auto=True)
+        self.best_fitting       = testing(None, P0,initial_lightcurve,TYPE="naive",Periodogram_auto=True)
         self.simulations  = {}
         self.lightcurve_p = {}
         self.lightcurve = {}
         self.simulated_periods = {}
         
     def run_simulation(self,method, Sizes, Nreps, output='outputs/',cluster=None):
+        sims = pd.read_csv(self.initial_lightcurve)
+        fun = lambda i:np.array(testing(i[0],self.P0,i[1],method, False))
+        dfs = [[i,make_samples(sims,'filt', i)] for i in np.sort(np.tile( Sizes, Nreps))]
         if cluster is None:
-            self.simulations[method]\
-                    = np.vectorize(testing,signature="(),(),(),(),(),()->(),(),(a),(a),(b),(b,c),(c),()")(
-                np.sort(np.tile( Sizes, Nreps)),
-                self.P0,self.initial_lightcurve,method, True,False)
+            L= [*map(fun,dfs)]
         else:
             with Client(cluster) as client:
-                fun = lambda i:np.array(testing(i,self.P0,self.initial_lightcurve,method, True,False))[0]
-                #TO_IMPLEMENT
-                self.simulations[method]=da.map_blocks(lambda x:fun(x),np.sort(np.tile( Sizes, Nreps))).compute()
+                futures= client.map(fun,dfs)
+                L = client.gather(futures)
+        self.simulations[method] = unpack(L)           
+                
         self.lightcurve_p[method],\
         self.lightcurve[method],\
         self.simulated_periods[method] = self.decompose(self.simulations[method],method, output)
@@ -151,5 +160,3 @@ class MCSimulation:
         self.lightcurve_p[method].to_csv(output_+'lightcurve_p.csv')
         self.simulated_periods[method].to_csv(output_+'periods.csv')
         return self.lightcurve_p[method], self.lightcurve[method],self.simulated_periods[method]
-        
-   
