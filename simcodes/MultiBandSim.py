@@ -108,24 +108,35 @@ class MCSimulation:
         self.lightcurve_p = {}
         self.lightcurve = {}
         self.simulated_periods = {}
-        
-    def run_simulation(self,method, Sizes, Nreps, output='outputs/',cluster=None):
+        self.bootstrap_samples  = {}
+    def produce_bootstrap(self,Sizes,Nreps):
         sims = pd.read_csv(self.initial_lightcurve)
+        self.dfs = [[i,make_samples(sims,'filt', i)] for i in np.sort(np.tile( Sizes, Nreps))]
+    def run_simulation(self,method, cluster=None,output=None):
+        
         fun = lambda i:np.array(testing(i[0],self.P0,i[1],method, False))
-        dfs = [[i,make_samples(sims,'filt', i)] for i in np.sort(np.tile( Sizes, Nreps))]
+        
+        
         if cluster is None:
-            L= [*map(fun,dfs)]
+            L= [*map(fun,self.dfs)]
         else:
             with Client(cluster) as client:
-                futures= client.map(fun,dfs)
+                futures= client.map(fun,self.dfs)
                 L = client.gather(futures)
         self.simulations[method] = unpack(L)           
+        self.bootstrap_samples[method] = []
+        for i in range(len(self.dfs)):
+            self.bootstrap_samples[method].append(self.dfs[i][1])
+            self.bootstrap_samples[method][-1]['run']=i
+        self.bootstrap_samples[method] = pd.concat(self.bootstrap_samples[method])
                 
         self.lightcurve_p[method],\
         self.lightcurve[method],\
-        self.simulated_periods[method] = self.decompose(self.simulations[method],method, output)
+        self.simulated_periods[method] = self.decompose(self.simulations[method],method)
+        if output is not None:
+            self.save_simulation(output)
     
-    def decompose(self,VectorizedInput,method,output_):
+    def decompose(self,VectorizedInput,method):
         MCN,MCPeriods,\
         MCPeriodogram_p, MCPeriodogram_A,\
         MCFilter, MCMag,  MCPhase,MCType = VectorizedInput
@@ -156,7 +167,30 @@ class MCSimulation:
                                                                                 lambda x: np.min(x),
                                                                                 lambda x: sem(x)]})
         self.lightcurve_p[method].columns = ['p_16', 'p_50', 'p_84','max','min','sem']
-        self.lightcurve[method].to_csv(output_+'lightcurve.csv')
-        self.lightcurve_p[method].to_csv(output_+'lightcurve_p.csv')
-        self.simulated_periods[method].to_csv(output_+'periods.csv')
+        self.lightcurve_p[method]['method'] = method
+        self.lightcurve[method]['method'] = method
+        self.simulated_periods[method]['method'] = method
+        self.bootstrap_samples[method]['method'] = method
+        self.Lightcurve = pd.concat(self.lightcurve.values())
+        self.Lightcurve_p = pd.concat(self.lightcurve_p.values())
+        self.Simulated_periods = pd.concat( self.simulated_periods.values())
+        self.Bootstrap_samples = pd.concat(self.bootstrap_samples.values())
         return self.lightcurve_p[method], self.lightcurve[method],self.simulated_periods[method]
+    
+    def save_simulations(self,output_):
+        self.Lightcurve.to_csv(output_+'_lightcurve.csv')
+        self.Lightcurve_p.to_csv(output_+'_lightcurve_p.csv')
+        self.Simulated_periods.to_csv(output_+'_periods.csv')
+        self.Bootstrap_samples.to_csv(output_+'_samples.csv')
+        
+    def load_simulations(self,output_):
+        self.Lightcurve        = pd.read_csv(output_+'_lightcurve.csv')
+        self.Lightcurve_p      = pd.read_csv(output_+'_lightcurve_p.csv')
+        self.Simulated_periods = pd.read_csv(output_+'_periods.csv')
+        self.Bootstrap_samples = pd.read_csv(output_+'_samples.csv')
+        self.lightcurve        = {method: self.Lightcurve[ self.Lightcurve['method']==method] for method in pd.unique( self.Lightcurve['method'])} 
+        self.lightcurve_p      = {method: self.Lightcurve_p[ self.Lightcurve_p['method']==method] for method in pd.unique( self.Lightcurve_p['method'])}
+        self.lightcurve_p      = {method:df.set_index(["kind",'N','Filter','phase bin',]) for method,df in self.lightcurve_p.items()}
+        self.simulated_periods = {method: self.Simulated_periods[ self.Simulated_periods['method']==method] for method in pd.unique( self.Simulated_periods['method'])}
+        self.bootstrap_samples = {method: self.Bootstrap_samples[ self.Bootstrap_samples['method']==method] for method in pd.unique( self.Bootstrap_samples['method'])}      
+        
