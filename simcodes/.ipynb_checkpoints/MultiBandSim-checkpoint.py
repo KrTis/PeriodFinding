@@ -98,12 +98,17 @@ def unpack(X):
     L = len(X[0])
     outs = [np.array([X[i][j] for i in range(N)]) for j in range(L)]
     return outs
+def window(X:pd.DataFrame, c:np.float,w:np.float,phasecol='phase'):
+    phases=X['phase']
+    a = c-w/2.
+    b = c+w/2.
+    return (phases<a) | (phases>b)
 class MCSimulation:
     def __init__(self, data_, P0, initial_lightcurve):
         self.P0                 = P0
         self.data_              = data_
         self.initial_lightcurve = initial_lightcurve
-        self.best_fitting       = testing(None, P0,initial_lightcurve,TYPE="naive",Periodogram_auto=True)
+        self.best_fitting       = testing(None, P0,initial_lightcurve,TYPE="fast",Periodogram_auto=True)
         self.simulations  = {}
         self.lightcurve_p = {}
         self.lightcurve = {}
@@ -112,6 +117,8 @@ class MCSimulation:
     def produce_bootstrap(self,Sizes,Nreps):
         sims = pd.read_csv(self.initial_lightcurve)
         self.dfs = [[i,make_samples(sims,'filt', i)] for i in np.sort(np.tile( Sizes, Nreps))]
+    def remove_window(self,*args,**kwargs):
+        self.dfs = [[i, K[window(K,*args,**kwargs)]] for i, K in self.dfs]
     def run_simulation(self,method, cluster=None,output=None):
         
         fun = lambda i:np.array(testing(i[0],self.P0,i[1],method, False))
