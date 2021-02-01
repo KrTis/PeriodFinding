@@ -9,6 +9,25 @@ import astropy.timeseries as astropy_timeseries
 from astropy.table import Table, vstack
 import warnings
 from scipy.stats import sem
+def p16(x):
+    
+    return np.percentile(x,16)
+def p84(x):
+    return np.percentile(x,84)
+def med_sig(x):
+    return (np.percentile(x,75)-np.percentile(x,25))/1.349
+def unexplained_variance(x):
+    return np.sum((x-np.median(x))**2)/x.size-med_sig(x)**2
+def Outliers1(x):
+    N = x.size
+    s = med_sig(x)
+    m = np.median(x)
+    return (np.sum(x<m-s)+ np.sum(x>m+s))/N
+def Outliers3(x):
+    N = x.size
+    s = med_sig(x)
+    m = np.median(x)
+    return (np.sum(x<m-3*s)+ np.sum(x>m+3*s))/N
 def plot_lightcurve(lightcurve_p,Kbf,data):    
     bins = pd.unique(lightcurve_p.index.get_level_values(1))[::5]
     fig,ax = plt.subplots(1,bins.size,figsize=(5*bins.size,5))
