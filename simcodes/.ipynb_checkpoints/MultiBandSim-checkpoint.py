@@ -134,6 +134,9 @@ class MCSimulation:
         self.dfs = [[i,make_samples(sims,'filt', i)] for i in np.sort(np.tile( Sizes, Nreps))]
     def remove_window(self,*args,**kwargs):
         self.dfs = [[i, K[window(K,*args,**kwargs)]] for i, K in self.dfs]
+    def remove_window_variable_width(self,centers_widths,*args,**kwargs):
+        self.dfs = [[i, K[window(K,centers_widths[j][0],centers_widths[j][1],*args,**kwargs)]] for i, K in self.dfs for j in range(len(centers_widths))]
+        self.dfs = [[K.shape[0], K] for i, K in self.dfs ]
     def run_simulation(self,method, cluster=None,output=None):
         def MapWrapper(i):
             

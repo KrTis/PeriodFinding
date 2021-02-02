@@ -1,1 +1,1 @@
-27385 OGLE-BLG-RRLYR-00005	Bootstrap 0 window 0.4	True
+27480 OGLE-BLG-RRLYR-00100	Bootstrap 0	True
