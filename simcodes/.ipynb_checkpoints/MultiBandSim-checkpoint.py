@@ -10,7 +10,7 @@ from astropy.table import Table, vstack
 import warnings
 from scipy.stats import sem
 from dask.distributed import Client, SSHCluster
-
+import dask
 class correctedNaiveMultiband:
     def __init__(self,*args,**kwargs):
         
@@ -45,6 +45,13 @@ def make_samples(df,filtercol,Number_in_simulation):
                 
                 DF = DF.append(cut.iloc[np.random.randint(0,cut.shape[0],min(Number_in_simulation,cut.shape[0])),:])
             return DF.reset_index()
+def make_index_samples(df,filtercol,Number_in_simulation):
+            DF = pd.DataFrame()
+            for _filter in pd.unique(df[filtercol]):
+                cut = df[df[filtercol]==_filter]
+                
+                DF = DF.append(cut.iloc[np.random.randint(0,cut.shape[0],min(Number_in_simulation,cut.shape[0])),:])
+            return DF.index
 def testing(Number_in_simulation, P0, original_file, TYPE='fast',  Periodogram_auto=False, phase_plot=True):
 
         o = np.linspace(1/100,24,10000)
@@ -112,7 +119,8 @@ def window(X:pd.DataFrame, c:np.float,w:np.float,phasecol='phase'):
     b = c+w/2.
     return (phases<a) | (phases>b)
 class MCSimulation:
-    def __init__(self, data_, P0, initial_lightcurve,verbose=True):
+    memory_types = ['df', 'index']
+    def __init__(self, data_, P0, initial_lightcurve,verbose=True,memory_type='df'):
         self.P0                 = P0
         self.data_              = data_
         self.initial_lightcurve = initial_lightcurve
@@ -123,37 +131,63 @@ class MCSimulation:
         self.simulated_periods = {}
         self.bootstrap_samples  = {}
         self.verbose = verbose
+        self.memory_type = memory_type
+    @property
+    def memory_type(self):
+        return self._memory_type
+    @memory_type.setter
+    def memory_type(self,x):
+        if x not in self.memory_types:
+            raise ValueError('Invalid memory type')
+        self._memory_type = x
     def do_best(self,):
         self.best_fitting       = testing(None, self.P0,self.initial_lightcurve,TYPE="fast",Periodogram_auto=True,phase_plot=True)
     def compute_phase(self):
         df = pd.read_csv(self.initial_lightcurve)
-        df['phase'] =(df['t'] / self.P0) % 1
+        df.loc[:,'phase'] =(df['t'] / self.P0) % 1
         df.to_csv(self.initial_lightcurve)
     def produce_bootstrap(self,Sizes,Nreps):
-        sims = pd.read_csv(self.initial_lightcurve)
-        self.dfs = [[i,make_samples(sims,'filt', i)] for i in np.sort(np.tile( Sizes, Nreps))]
+        if self.memory_type == 'df':
+            sims = pd.read_csv(self.initial_lightcurve)
+            self.dfs = [[i,make_samples(sims,'filt', i)] for i in np.sort(np.tile( Sizes, Nreps))]
+        if self.memory_type== 'index':
+            self.sims = pd.read_csv(self.initial_lightcurve)
+            self.dfs = [[i,make_index_samples(self.sims,'filt', i)] for i in np.sort(np.tile( Sizes, Nreps))]
     def remove_window(self,*args,**kwargs):
         self.dfs = [[i, K[window(K,*args,**kwargs)]] for i, K in self.dfs]
     def remove_window_variable_width(self,centers_widths,*args,**kwargs):
-        self.dfs = [[i, K[window(K,centers_widths[j][0],centers_widths[j][1],*args,**kwargs)]] for i, K in self.dfs for j in range(len(centers_widths))]
-        self.dfs = [[K.shape[0], K] for i, K in self.dfs ]
+        if self.memory_type =='df':
+            self.dfs = [[i, K[window(K,centers_widths[j][0],centers_widths[j][1],*args,**kwargs)]] for j in range(len(centers_widths)) for i, K in self.dfs ]
+            self.dfs = [[K.shape[0], K] for i, K in self.dfs ]
+        if self.memory_type== 'index':
+            self.dfs = [[i, window(self.sims.iloc[K,:],centers_widths[j][0],centers_widths[j][1],*args,**kwargs).index] for j in range(len(centers_widths)) for i, K in self.dfs ]
+            self.dfs = [[np.size(K), K] for i, K in self.dfs ]
+        
     def run_simulation(self,method, cluster=None,output=None):
         def MapWrapper(i):
-            
-            return np.array(testing(i[0],self.P0,i[1],method, False,phase_plot = self.verbose))
+            if self.memory_type== 'index':
+                return np.array(testing(i[0],self.P0,self.sims.loc[i[1],:].reset_index(),method, False,phase_plot = self.verbose))
+            if self.memory_type== 'df':
+                return np.array(testing(i[0],self.P0,i[1],method, False,phase_plot = self.verbose))
         
         
         if cluster is None:
             L= [*map(MapWrapper,self.dfs)]
         else:
             with Client(cluster) as client:
+                #inputs = client.scatter(self.dfs)
+                
                 futures= client.map(MapWrapper,self.dfs)
                 L = client.gather(futures)
+                
         print(f"D",end='\t')
         self.simulations[method] = unpack(L)           
         self.bootstrap_samples[method] = []
         for i in range(len(self.dfs)):
-            self.bootstrap_samples[method].append(self.dfs[i][1])
+            if self.memory_type=='df':
+                self.bootstrap_samples[method].append(self.dfs[i][1])
+            if self.memory_type=='index':
+                self.bootstrap_samples[method].append(self.sims.loc[self.dfs[i][1],:].reset_index())
             self.bootstrap_samples[method][-1]['run']=i
         self.bootstrap_samples[method] = pd.concat(self.bootstrap_samples[method])
         if self.verbose:        

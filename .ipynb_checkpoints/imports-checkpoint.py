@@ -11,4 +11,5 @@ from dask.distributed import Client, SSHCluster
 from IPython.core.display import display, HTML
 import dask.array as da
 from simcodes.helpers import *
+import scipy.stats as sc
 data_ = 'data/'
