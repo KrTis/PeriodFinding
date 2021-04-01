@@ -60,22 +60,34 @@ class ExtendedLS(gatspy.periodic.LombScargleMultiband):
             return ymeans + np.dot(X, self.theta)
         else:
             return np.dot(X, self.theta)
-def concatenating(g1:pd.DataFrame,folder:str,distribution_relative_error:scipy.stats.rv_continuous):
+def concatenating(g1:pd.DataFrame,folder:str,distribution_relative_error:scipy.stats.rv_continuous=None,
+                 necessary_columns = ['t','mag','filt','magerr'],
+                   adaptation={'filtercode':'filt',
+                              'mjd':'t'},
+                 copy_cols = ['Nterms']):
     Library = []
 
     for i, row in g1.iterrows():
         filename = folder+f"{row['source_id']}.csv"
-        D =  pd.read_csv(filename)
-        if np.sum(D['catflags']==0)>0 and np.sum(D[D['catflags']==0].columns.isin(['t','phase','mag','filt','magerr']))==5:
+        D =  pd.read_csv(filename,index_col=0)
+        for k,v in adaptation.items():
+                D[v] =D[k] 
+        if np.sum(D['catflags']==0)>0 and np.sum(D[D['catflags']==0].columns.isin(necessary_columns))==len(necessary_columns):
                
-                D = D[D['catflags']==0][['t','phase','mag','filt','magerr']]
+                D = D[D['catflags']==0][necessary_columns]
                 D['t'] = D.t-D.t.min()
                 D['row'] = i
                 D['relative_error']=D.magerr/D.mag
+                for i in copy_cols:
+                    D[i] = row[i]
                 Library.append(D)
     lib= pd.concat(Library)
-    fit = distribution_relative_error.fit(lib.relative_error)
-    return lib, fit, distribution_relative_error(*fit)
+    if distribution_relative_error is not None:
+        fit = distribution_relative_error.fit(lib.relative_error)
+        return lib, fit, distribution_relative_error(*fit)
+    else:
+        return lib
+
 
 def produce_samples(data:pd.DataFrame,Ns:np.array,distribution_relative_error:scipy.stats.rv_continuous):
     dfs = []
@@ -96,13 +108,13 @@ def produce_samples(data:pd.DataFrame,Ns:np.array,distribution_relative_error:sc
                                     'Size':N}))
             num+=1
     return pd.concat(dfs).reset_index(drop=True)
-def produce_samples_dask(client,data:pd.DataFrame,Ns:np.array,distribution_relative_error:scipy.stats.rv_continuous):
-    def Wrapper_samples(V:list):
-        i,datum = V
+def produce_samples_dask(client,data:pd.DataFrame,Ns:np.array,distribution_relative_error:scipy.stats.rv_continuous,Nterms_base=1):
+    def Wrapper_samples(i,data):
+        datum = data.loc[i,:]
         ls=[]
         for j,N in enumerate(Ns):
             num=Ns.size*i+j
-            m = ExtendedLS(fit_period=True,optimizer_kwds=dict(quiet=True),Nterms_base=1)
+            m = ExtendedLS(fit_period=True,optimizer_kwds=dict(quiet=True),Nterms_base=Nterms_base)
             m.import_parameters(datum)
             phase = np.random.uniform(0,10,N)
             t     = np.tile(phase*datum['_best_period'],datum['unique_filts_'].size)
@@ -117,29 +129,37 @@ def produce_samples_dask(client,data:pd.DataFrame,Ns:np.array,distribution_relat
         return ls
                 #inputs = client.scatter(self.dfs)
                 
-    futures= client.map(Wrapper_samples,list(data.iterrows()))
+    futures= client.map(Wrapper_samples,data.index,data=data)
     dfs = client.gather(futures)
 
     return pd.concat([_ for df in dfs for _ in df]).reset_index(drop=True)
 
         
 
-def LibraryCreation(g1:pd.DataFrame,library_name:str,folder:str,FourierComponents:list):
+def LibraryCreation(g1:pd.DataFrame,library_name:str,folder:str,FourierComponents:list,
+                   necessary_columns = ['t','mag','filt','magerr'],
+                   adaptation={'filtercode':'filt',
+                              'mjd':'t'},
+                    row_adaptation={'Period any':'input period'}):
     Library = pd.DataFrame({})
-
+    for k,v in row_adaptation.items():
+                g1[v] =g1[k] 
     for i, row in g1.iterrows():
         for Nterms in FourierComponents:
             filename = folder+f"{row['source_id']}.csv"
-            D =  pd.read_csv(filename)
-            if np.sum(D['catflags']==0)>0 and np.sum(D[D['catflags']==0].columns.isin(['t','phase','mag','filt','magerr']))==5:
-               
-                D = D[D['catflags']==0][['t','phase','mag','filt','magerr']]
+            D =  pd.read_csv(filename,index_col=0)
+            for k,v in adaptation.items():
+                D[v] =D[k] 
+            
+            if np.sum(D['catflags']==0)>0 and np.sum(D[D['catflags']==0].columns.isin(necessary_columns))==len(necessary_columns):
+                
+                D = D[D['catflags']==0][necessary_columns]
                 D['t'] = D.t-D.t.min()
             
 
                 model = gatspy.periodic.LombScargleMultiband(fit_period=True,optimizer_kwds=dict(quiet=True),Nterms_base=Nterms)
                 
-                model.optimizer.period_range=(max(D.t.diff().min(),0.01*row['pf']), min(100*row['pf'],D.t.max()))
+                model.optimizer.period_range=(max(D.t.diff().min(),0.01*row['input period']), min(100*row['input period'],D.t.max()))
                 model.fit(D.t,D.mag,D.magerr, D.filt)        
                 bestpers = model.find_best_periods(10,True)
                 m = ExtendedLS(fit_period=True,optimizer_kwds=dict(quiet=True),Nterms_base=Nterms)
@@ -147,7 +167,7 @@ def LibraryCreation(g1:pd.DataFrame,library_name:str,folder:str,FourierComponent
                 m.copy_parameters(model)
 
                 D['prediction'] = m.predict(D.t,D.filt)
-                D['phase'] = (D.t/row['pf'])%1
+                D['phase'] = (D.t/row['input period'])%1
                 D['fit phase'] = (D.t/m._best_period)%1
                 
                 D.sort_values('phase',inplace=True)
@@ -156,7 +176,7 @@ def LibraryCreation(g1:pd.DataFrame,library_name:str,folder:str,FourierComponent
                 t = ϕ*m._best_period
                 filts = pd.unique(D.filt)
                 predictions = pd.DataFrame({'t fit':np.tile( ϕ*m._best_period,filts.size),
-                                            't Gaia':np.tile( ϕ*row['pf'],filts.size),
+                                            't Gaia':np.tile( ϕ*row['input period'],filts.size),
                                             'phase':np.tile(ϕ,filts.size),
                                            'filt':np.repeat(filts, ϕ.size)})
                 
@@ -169,7 +189,7 @@ def LibraryCreation(g1:pd.DataFrame,library_name:str,folder:str,FourierComponent
                     
                 params= m.export_parameters()
                 params['source_id'] = row['source_id']
-                params['Expected'] = row['pf']
+                params['Expected'] = row['input period']
                 params['E-C'] = params['Expected']-params['_best_period']
                 params['dof'] = D['prediction'].size-1
                 params['χ2'] = np.sum((D['prediction']-D['mag'])**2/D['magerr']**2)
