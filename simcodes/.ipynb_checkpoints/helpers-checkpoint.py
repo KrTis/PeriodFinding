@@ -50,7 +50,20 @@ def plot_lightcurve(lightcurve_p,Kbf,data):
             ax[i].invert_yaxis()
     fig.tight_layout()
     return fig
-
+def compute_stats(simulated_periods,chosen_col,groupby_col):
+    import scipy.stats as sc
+    moments = {chosen_col: [
+                                                                                lambda x: np.percentile(x.dropna(),16),
+                                                                                lambda x: np.percentile(x.dropna(),50),
+                                                                                lambda x: np.percentile(x.dropna(),84),
+                                                                                lambda x: np.max(x.dropna()),
+                                                                                lambda x: np.min(x.dropna()),
+                                                                                lambda x: sc.sem(x.dropna()),
+                                                                                lambda x: sc.skew(x.dropna()),
+                                                                                lambda x: np.std(x.dropna())]}
+    moments = simulated_periods.groupby(simulated_periods[groupby_col],).agg(moments)
+    moments.columns = ['p_16', 'p_50', 'p_84','max','min','sem','skewness','std']
+    return moments
 def periods(simulated_periods, P0,label,FIG=None):
     import scipy.stats as sc
     mean = simulated_periods.groupby(simulated_periods['N'],).median()

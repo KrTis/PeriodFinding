@@ -1,2 +1,2 @@
 from .fileop import *
-from .df import Chunk
+from .df import Chunk, chunking

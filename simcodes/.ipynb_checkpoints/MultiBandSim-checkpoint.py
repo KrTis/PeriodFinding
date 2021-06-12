@@ -1,3 +1,6 @@
+#import sys
+#sys.path.append('/mnt/beegfs/scratch-noraid/ktisanic/Notebooks/PeriodFinding/simcodes/')
+#sys.path.append('/mnt/beegfs/scratch-noraid/ktisanic/Notebooks/PeriodFinding/simcodes/MC/')
 import pandas as pd
 import matplotlib.pyplot as plt
 import astropy
